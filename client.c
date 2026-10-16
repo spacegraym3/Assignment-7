@@ -32,17 +32,16 @@ static void print_board(const int32_t board[]) {
     printf("\n");
 }
 
-static int send_request(int sock_fd, const struct sockaddr_in *server_addr,
-                        int32_t type, int32_t game_id, int32_t column,
-                        int32_t player) {
+static void send_request(int sock_fd, const struct sockaddr_in *server_addr,
+                         int32_t type, int32_t game_id, int32_t column,
+                         int32_t player) {
     struct client_request request = {
         .type = htonl(type),
         .game_id = htonl(game_id),
         .column = htonl(column),
         .player = htonl(player)
     };
-    ssize_t sent = sendto(sock_fd, &request, sizeof(request), 0, (const struct sockaddr *)server_addr, sizeof(*server_addr));
-    return 0;
+    sendto(sock_fd, &request, sizeof(request), 0, (const struct sockaddr *)server_addr, sizeof(*server_addr));
 }
 
 static int receive_response(int sock_fd, struct server_response *response) {
@@ -124,10 +123,7 @@ int main() {
         request_type = CLIENT_JOIN_GAME;
     }
 
-    if (send_request(sock_fd, &server_addr, request_type, game_id, -1, -1) < 0) {
-        close(sock_fd);
-        return 1;
-    }
+    send_request(sock_fd, &server_addr, request_type, game_id, -1, -1);
 
     int player = -1;
     int displayed_state = 0;
@@ -143,11 +139,8 @@ int main() {
             int32_t retry_type = player < 0 ? request_type : CLIENT_RESUME;
             int32_t retry_game_id = game_id;
             int32_t retry_player = player < 0 ? -1 : player;
-            if (send_request(sock_fd, &server_addr, retry_type, retry_game_id,
-                             -1, retry_player) < 0) {
-                result = 1;
-                break;
-            }
+            send_request(sock_fd, &server_addr, retry_type, retry_game_id,
+                         -1, retry_player);
             continue;
         }
         if (receive_result < 0) {
@@ -222,11 +215,8 @@ int main() {
                 result = 1;
                 break;
             }
-            if (send_request(sock_fd, &server_addr, CLIENT_MOVE,
-                             response.game_id, column, player) < 0) {
-                result = 1;
-                break;
-            }
+            send_request(sock_fd, &server_addr, CLIENT_MOVE,
+                         response.game_id, column, player);
         } else {
             if (state_changed) {
                 printf("waiting for other player...\n");
