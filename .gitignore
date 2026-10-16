@@ -1,2 +1,4 @@
 client
 *.o
+*.out
+server
