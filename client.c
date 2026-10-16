@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/time.h>
+#include <errno.h>
 
 #include "common.h"
 
@@ -31,11 +33,13 @@ static void print_board(const int32_t board[]) {
 }
 
 static int send_request(int sock_fd, const struct sockaddr_in *server_addr,
-                        int32_t type, int32_t game_id, int32_t column) {
+                        int32_t type, int32_t game_id, int32_t column,
+                        int32_t player) {
     struct client_request request = {
         .type = htonl(type),
         .game_id = htonl(game_id),
-        .column = htonl(column)
+        .column = htonl(column),
+        .player = htonl(player)
     };
     ssize_t sent = sendto(sock_fd, &request, sizeof(request), 0,
                           (const struct sockaddr *)server_addr,
@@ -54,6 +58,9 @@ static int send_request(int sock_fd, const struct sockaddr_in *server_addr,
 static int receive_response(int sock_fd, struct server_response *response) {
     ssize_t received = recvfrom(sock_fd, response, sizeof(*response), 0, NULL, NULL);
     if (received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 1;
+        }
         perror("recvfrom");
         return -1;
     }
@@ -78,6 +85,17 @@ int main() {
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_fd < 0) {
         perror("socket");
+        return 1;
+    }
+
+    struct timeval receive_timeout = {
+        .tv_sec = 0,
+        .tv_usec = 500000
+    };
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout,
+                   sizeof(receive_timeout)) < 0) {
+        perror("setsockopt");
+        close(sock_fd);
         return 1;
     }
 
@@ -116,16 +134,33 @@ int main() {
         request_type = CLIENT_JOIN_GAME;
     }
 
-    if (send_request(sock_fd, &server_addr, request_type, game_id, -1) < 0) {
+    if (send_request(sock_fd, &server_addr, request_type, game_id, -1, -1) < 0) {
         close(sock_fd);
         return 1;
     }
 
     int player = -1;
+    int displayed_state = 0;
+    int32_t displayed_status = -1;
+    int32_t displayed_winner = -1;
+    int32_t displayed_current_player = -1;
+    int32_t displayed_cells[BOARD_ROWS * BOARD_COLUMNS];
     int result = 0;
     for (;;) {
         struct server_response response;
-        if (receive_response(sock_fd, &response) < 0) {
+        int receive_result = receive_response(sock_fd, &response);
+        if (receive_result == 1) {
+            int32_t retry_type = player < 0 ? request_type : CLIENT_RESUME;
+            int32_t retry_game_id = game_id;
+            int32_t retry_player = player < 0 ? -1 : player;
+            if (send_request(sock_fd, &server_addr, retry_type, retry_game_id,
+                             -1, retry_player) < 0) {
+                result = 1;
+                break;
+            }
+            continue;
+        }
+        if (receive_result < 0) {
             result = 1;
             break;
         }
@@ -151,12 +186,26 @@ int main() {
                 result = 1;
                 break;
             }
+            game_id = response.game_id;
         }
 
-        printf("\nCurrent Game\n");
-        printf("---------------------\n");
-        printf("GameID: %d\n", response.game_id);
-        print_board(response.cells);
+        int state_changed = !displayed_state ||
+            response.status != displayed_status ||
+            response.winner != displayed_winner ||
+            response.current_player != displayed_current_player ||
+            memcmp(response.cells, displayed_cells, sizeof(displayed_cells)) != 0;
+        if (state_changed) {
+            printf("\nCurrent Game\n");
+            printf("---------------------\n");
+            printf("GameID: %d\n", response.game_id);
+            print_board(response.cells);
+
+            displayed_state = 1;
+            displayed_status = response.status;
+            displayed_winner = response.winner;
+            displayed_current_player = response.current_player;
+            memcpy(displayed_cells, response.cells, sizeof(displayed_cells));
+        }
 
         if (response.status == SERVER_FINISHED) {
             puts(response.winner == player ? "YOU WIN!" : "YOU LOSE!");
@@ -167,7 +216,9 @@ int main() {
             break;
         }
         if (response.status == SERVER_WAITING) {
-            printf("waiting for other player...\n");
+            if (state_changed) {
+                printf("waiting for other player...\n");
+            }
             continue;
         }
 
@@ -182,12 +233,14 @@ int main() {
                 break;
             }
             if (send_request(sock_fd, &server_addr, CLIENT_MOVE,
-                             response.game_id, column) < 0) {
+                             response.game_id, column, player) < 0) {
                 result = 1;
                 break;
             }
         } else {
-            printf("waiting for other player...\n");
+            if (state_changed) {
+                printf("waiting for other player...\n");
+            }
         }
     }
 

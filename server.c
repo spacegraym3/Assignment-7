@@ -11,11 +11,11 @@
 
 #define PORT 8080
 
-#define MAX_GAMES 100
-
 struct server_game {
     int in_use;
     int player_count;
+    int connected[2];
+    int recovered;
     struct game game;
     struct sockaddr_in players[2];
 };
@@ -65,17 +65,41 @@ static int send_response(int sock_fd, const struct sockaddr_in *client_addr,
 
 static int find_client_player(const struct server_game *server_game,
                               const struct sockaddr_in *client_addr) {
-    for (int player = 0; player < server_game->player_count; player++) {
-        if (same_client(&server_game->players[player], client_addr)) {
+    for (int player = 0; player < 2; player++) {
+        if (server_game->connected[player] &&
+            same_client(&server_game->players[player], client_addr)) {
             return player;
         }
     }
     return -1;
 }
 
+static int register_client(struct server_game *server_game, int player,
+                           const struct sockaddr_in *client_addr) {
+    if (player < 0 || player > 1) {
+        return -1;
+    }
+
+    int existing_player = find_client_player(server_game, client_addr);
+    if (existing_player >= 0) {
+        return existing_player == player ? 0 : -1;
+    }
+    if (server_game->connected[player]) {
+        return -1;
+    }
+
+    server_game->players[player] = *client_addr;
+    server_game->connected[player] = 1;
+    server_game->player_count++;
+    return 1;
+}
+
 static void send_game_state(int sock_fd, const struct server_game *server_game,
                             int status, int winner) {
-    for (int player = 0; player < server_game->player_count; player++) {
+    for (int player = 0; player < 2; player++) {
+        if (!server_game->connected[player]) {
+            continue;
+        }
         if (send_response(sock_fd, &server_game->players[player],
                           server_game, player, status, winner, NULL) < 0) {
             fprintf(stderr, "Could not notify player %d in game %d\n",
@@ -86,7 +110,10 @@ static void send_game_state(int sock_fd, const struct server_game *server_game,
 
 static void send_game_error(int sock_fd, const struct server_game *server_game,
                             const char *message) {
-    for (int player = 0; player < server_game->player_count; player++) {
+    for (int player = 0; player < 2; player++) {
+        if (!server_game->connected[player]) {
+            continue;
+        }
         if (send_response(sock_fd, &server_game->players[player],
                           server_game, player, SERVER_ERROR, -1, message) < 0) {
             fprintf(stderr, "Could not notify player %d in game %d: %s\n",
@@ -106,9 +133,6 @@ static int board_is_full(const struct game *game) {
 
 
 int main(int argc, char* argv[]) {
-    (void)argc;
-    (void)argv;
-
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_fd < 0) {
         perror("socket");
@@ -132,6 +156,37 @@ int main(int argc, char* argv[]) {
 
     struct server_game games[MAX_GAMES] = {0};
     int next_game_id = 0;
+    int recovery_mode = argc > 1 && strcmp(argv[1], "1") == 0;
+    if (recovery_mode) {
+        for (int game_id = 0; game_id < MAX_GAMES; game_id++) {
+            char filepath[64];
+            int path_length = snprintf(filepath, sizeof(filepath),
+                                       "game_%d.save", game_id);
+            if (path_length < 0 || (size_t)path_length >= sizeof(filepath)) {
+                fprintf(stderr, "Could not construct save path for game %d\n",
+                        game_id);
+                continue;
+            }
+
+            struct game recovered_game;
+            if (loadgame(&recovered_game, filepath) < 0) {
+                if (errno != ENOENT) {
+                    perror(filepath);
+                }
+                continue;
+            }
+            if (recovered_game.gameId != game_id) {
+                fprintf(stderr, "Save file %s contains the wrong game ID\n",
+                        filepath);
+                continue;
+            }
+
+            games[game_id].in_use = 1;
+            games[game_id].recovered = 1;
+            games[game_id].game = recovered_game;
+            next_game_id = game_id + 1;
+        }
+    }
 
     for (;;) {
         struct client_request request;
@@ -152,10 +207,39 @@ int main(int argc, char* argv[]) {
         int type = (int32_t)ntohl((uint32_t)request.type);
         int game_id = (int32_t)ntohl((uint32_t)request.game_id);
         int column = (int32_t)ntohl((uint32_t)request.column);
+        int requested_player = (int32_t)ntohl((uint32_t)request.player);
         struct server_game *server_game = NULL;
         int player = -1;
 
         if (type == CLIENT_CREATE_GAME) {
+            int existing_game = -1;
+            int existing_player = -1;
+            for (int id = 0; id < next_game_id; id++) {
+                if (!games[id].in_use) {
+                    continue;
+                }
+                int connected_player = find_client_player(&games[id], &client_addr);
+                if (connected_player >= 0) {
+                    existing_game = id;
+                    existing_player = connected_player;
+                    break;
+                }
+            }
+            if (existing_game >= 0) {
+                server_game = &games[existing_game];
+                int winner = check_win(&server_game->game);
+                int status = winner >= 0 ? SERVER_FINISHED :
+                    board_is_full(&server_game->game) ? SERVER_TIE :
+                    server_game->player_count == 2 ? SERVER_ACTIVE : SERVER_WAITING;
+                if (status == SERVER_ACTIVE) {
+                    send_game_state(sock_fd, server_game, status, -1);
+                } else if (send_response(sock_fd, &client_addr, server_game,
+                                         existing_player, status, winner, NULL) < 0) {
+                    fprintf(stderr, "Could not resend initial game state\n");
+                }
+                continue;
+            }
+
             if (next_game_id >= MAX_GAMES) {
                 struct server_game unavailable = {0};
                 unavailable.game.gameId = -1;
@@ -172,6 +256,7 @@ int main(int argc, char* argv[]) {
             server_game->player_count = 1;
             new_game(&server_game->game, game_id);
             server_game->players[0] = client_addr;
+            server_game->connected[0] = 1;
 
             if (send_response(sock_fd, &client_addr, server_game, 0,
                               SERVER_WAITING, -1, NULL) < 0) {
@@ -192,7 +277,45 @@ int main(int argc, char* argv[]) {
         }
         server_game = &games[game_id];
 
+        if (type == CLIENT_RESUME) {
+            int previous_player_count = server_game->player_count;
+            if (register_client(server_game, requested_player, &client_addr) < 0) {
+                if (send_response(sock_fd, &client_addr, server_game, -1,
+                                  SERVER_ERROR, -1,
+                                  "Could not restore player connection") < 0) {
+                    fprintf(stderr, "Could not send resume error response\n");
+                }
+                continue;
+            }
+
+            if (server_game->player_count == 2) {
+                int winner = check_win(&server_game->game);
+                int status = winner >= 0 ? SERVER_FINISHED :
+                    board_is_full(&server_game->game) ? SERVER_TIE : SERVER_ACTIVE;
+                if (previous_player_count < 2) {
+                    send_game_state(sock_fd, server_game, status, winner);
+                } else if (send_response(sock_fd, &client_addr, server_game,
+                                         requested_player, status, winner,
+                                         NULL) < 0) {
+                    fprintf(stderr, "Could not send resumed game state\n");
+                }
+            }
+            continue;
+        }
+
         if (type == CLIENT_JOIN_GAME) {
+            player = find_client_player(server_game, &client_addr);
+            if (player >= 0) {
+                int winner = check_win(&server_game->game);
+                int status = winner >= 0 ? SERVER_FINISHED :
+                    board_is_full(&server_game->game) ? SERVER_TIE :
+                    server_game->player_count == 2 ? SERVER_ACTIVE : SERVER_WAITING;
+                if (send_response(sock_fd, &client_addr, server_game, player,
+                                  status, winner, NULL) < 0) {
+                    fprintf(stderr, "Could not resend join state\n");
+                }
+                continue;
+            }
             if (server_game->player_count != 1) {
                 if (send_response(sock_fd, &client_addr, server_game, -1,
                                   SERVER_ERROR, -1, "Game already has two players") < 0) {
@@ -209,6 +332,7 @@ int main(int argc, char* argv[]) {
             }
 
             server_game->players[1] = client_addr;
+            server_game->connected[1] = 1;
             server_game->player_count = 2;
             send_game_state(sock_fd, server_game, SERVER_ACTIVE, -1);
             continue;
@@ -223,7 +347,14 @@ int main(int argc, char* argv[]) {
         }
 
         player = find_client_player(server_game, &client_addr);
-        if (player < 0 || server_game->player_count != 2) {
+        if (player >= 0 && player != requested_player) {
+            player = -1;
+        } else if (player < 0 && server_game->recovered &&
+                   register_client(server_game, requested_player, &client_addr) >= 0) {
+            player = requested_player;
+        }
+        if (player < 0 || (server_game->player_count != 2 &&
+                           !server_game->recovered)) {
             if (send_response(sock_fd, &client_addr, server_game, -1,
                               SERVER_ERROR, -1, "Client is not a player in this game") < 0) {
                 fprintf(stderr, "Could not send unauthorized-move response\n");

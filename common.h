@@ -23,7 +23,8 @@ struct game {
 enum client_message_type {
     CLIENT_CREATE_GAME = 1,
     CLIENT_JOIN_GAME,
-    CLIENT_MOVE
+    CLIENT_MOVE,
+    CLIENT_RESUME
 };
 
 enum server_message_status {
@@ -38,6 +39,7 @@ struct client_request {
     int32_t type;
     int32_t game_id;
     int32_t column;
+    int32_t player;
 };
 
 struct server_response {
