@@ -2,3 +2,4 @@ client
 *.o
 *.out
 server
+README*

@@ -106,6 +106,16 @@ As you start to structure your server, eventually you will want to support more 
 
 You will use the functions `recvfrom` to receive messages and `sendto` to send messages. The messages can send any bytes you wish to implement the correct functionality.
 
+The client and server share the UDP packet definitions in `common.h`. Requests use
+`struct client_request`, with each integer field in network byte order. Responses
+use `struct server_response`; its integer fields and flattened board cells are
+also in network byte order. Board cells are ordered row by row. The server should
+send `SERVER_WAITING` while a game has only one player, `SERVER_ACTIVE` when
+both players can play, `SERVER_FINISHED` with the winner set when a player wins,
+`SERVER_TIE` when the board fills, or `SERVER_ERROR` with an error message for
+an invalid request. Send an updated game state to both clients after each valid
+move.
+
 ## Step 2a: Server Setup
 
 In the provided `server.c` code there is a skeleton which sets up the socket and port.

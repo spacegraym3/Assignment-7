@@ -9,21 +9,20 @@
 
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 8080
-#define BUFFER_SIZE 4096
 
 
 // prints the 7x6 flattened board array in the correct format
-void print_board(int board[]) {
+static void print_board(const int32_t board[]) {
  
     printf("\n");
-    for (int col = 0; col < 7; col++)
+    for (int col = 0; col < BOARD_COLUMNS; col++)
         printf(" %d", col);
     printf("\n");
  
-    for (int row = 0; row < 6; row++) {
+    for (int row = 0; row < BOARD_ROWS; row++) {
         printf("|");
-        for (int col = 0; col < 7; col++) {
-            int cell = board[row * 7 + col];
+        for (int col = 0; col < BOARD_COLUMNS; col++) {
+            int32_t cell = board[row * BOARD_COLUMNS + col];
             printf("%c|", cell == 0 ? 'X' : cell == 1 ? 'O' : '.');
         }
         printf("\n");
@@ -31,16 +30,67 @@ void print_board(int board[]) {
     printf("\n");
 }
 
+static int send_request(int sock_fd, const struct sockaddr_in *server_addr,
+                        int32_t type, int32_t game_id, int32_t column) {
+    struct client_request request = {
+        .type = htonl(type),
+        .game_id = htonl(game_id),
+        .column = htonl(column)
+    };
+    ssize_t sent = sendto(sock_fd, &request, sizeof(request), 0,
+                          (const struct sockaddr *)server_addr,
+                          sizeof(*server_addr));
+    if (sent < 0) {
+        perror("sendto");
+        return -1;
+    }
+    if ((size_t)sent != sizeof(request)) {
+        fprintf(stderr, "Failed to send complete request\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int receive_response(int sock_fd, struct server_response *response) {
+    ssize_t received = recvfrom(sock_fd, response, sizeof(*response), 0, NULL, NULL);
+    if (received < 0) {
+        perror("recvfrom");
+        return -1;
+    }
+    if ((size_t)received != sizeof(*response)) {
+        fprintf(stderr, "Received an invalid response from the server\n");
+        return -1;
+    }
+
+    response->status = (int32_t)ntohl((uint32_t)response->status);
+    response->player = (int32_t)ntohl((uint32_t)response->player);
+    response->winner = (int32_t)ntohl((uint32_t)response->winner);
+    response->game_id = (int32_t)ntohl((uint32_t)response->game_id);
+    response->current_player = (int32_t)ntohl((uint32_t)response->current_player);
+    for (size_t i = 0; i < BOARD_ROWS * BOARD_COLUMNS; i++) {
+        response->cells[i] = (int32_t)ntohl((uint32_t)response->cells[i]);
+    }
+    response->error[sizeof(response->error) - 1] = '\0';
+    return 0;
+}
 
 int main() {
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd < 0) {
+        perror("socket");
+        return 1;
+    }
 
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(SERVER_PORT);
-    inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
+    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) != 1) {
+        fprintf(stderr, "Invalid server address: %s\n", SERVER_IP);
+        close(sock_fd);
+        return 1;
+    }
 
 
     printf("Connect 4\n");
@@ -48,11 +98,100 @@ int main() {
     printf("  2) Join a game\n");
     printf("> ");
     int choice = 0;
-    scanf("%d", &choice);
+    if (scanf("%d", &choice) != 1 || (choice != 1 && choice != 2)) {
+        fprintf(stderr, "Please choose 1 or 2\n");
+        close(sock_fd);
+        return 1;
+    }
 
-    // TODO: implement client logic
+    int game_id = -1;
+    int32_t request_type = CLIENT_CREATE_GAME;
+    if (choice == 2) {
+        printf("Game ID? >");
+        if (scanf("%d", &game_id) != 1 || game_id < 0) {
+            fprintf(stderr, "Please enter a valid game ID\n");
+            close(sock_fd);
+            return 1;
+        }
+        request_type = CLIENT_JOIN_GAME;
+    }
+
+    if (send_request(sock_fd, &server_addr, request_type, game_id, -1) < 0) {
+        close(sock_fd);
+        return 1;
+    }
+
+    int player = -1;
+    int result = 0;
+    for (;;) {
+        struct server_response response;
+        if (receive_response(sock_fd, &response) < 0) {
+            result = 1;
+            break;
+        }
+
+        if (response.status == SERVER_ERROR) {
+            fprintf(stderr, "Server error: %s\n", response.error);
+            result = 1;
+            break;
+        }
+        if (response.status != SERVER_WAITING &&
+            response.status != SERVER_ACTIVE &&
+            response.status != SERVER_FINISHED &&
+            response.status != SERVER_TIE) {
+            fprintf(stderr, "Received an unknown response from the server\n");
+            result = 1;
+            break;
+        }
+
+        if (player < 0) {
+            player = response.player;
+            if (player != 0 && player != 1) {
+                fprintf(stderr, "Received an invalid player assignment\n");
+                result = 1;
+                break;
+            }
+        }
+
+        printf("\nCurrent Game\n");
+        printf("---------------------\n");
+        printf("GameID: %d\n", response.game_id);
+        print_board(response.cells);
+
+        if (response.status == SERVER_FINISHED) {
+            puts(response.winner == player ? "YOU WIN!" : "YOU LOSE!");
+            break;
+        }
+        if (response.status == SERVER_TIE) {
+            printf("TIE\n");
+            break;
+        }
+        if (response.status == SERVER_WAITING) {
+            printf("waiting for other player...\n");
+            continue;
+        }
+
+        if (response.current_player == player) {
+            int column = -1;
+            printf("\nInput Move Row: > ");
+            if (scanf("%d", &column) != 1 ||
+                column < 0 || column >= BOARD_COLUMNS) {
+                fprintf(stderr, "Please enter a column from 0 to %d\n",
+                        BOARD_COLUMNS - 1);
+                result = 1;
+                break;
+            }
+            if (send_request(sock_fd, &server_addr, CLIENT_MOVE,
+                             response.game_id, column) < 0) {
+                result = 1;
+                break;
+            }
+        } else {
+            printf("waiting for other player...\n");
+        }
+    }
 
     close(sock_fd);
 
-    return 0;
+    return result;
 }
