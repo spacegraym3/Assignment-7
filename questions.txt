@@ -1,1 +1,2 @@
-(1)
+(1) If a cient to server message is dropped, the server will never receive the move and stay unchanged.  The client will wait for a response it will never get because the server doesn't know the client sent a request.
+(2) Even if a game is successfully saved via savegame, when the server restarts and loads the saved game, the server only knows the board, gameID and current player. It does not knkow the player's network addresses or wether they have rejoined the game.  The server won't know where to send updates.

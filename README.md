@@ -489,6 +489,7 @@ Without argv[1], start the server without recovery mode.
 ## Step 5a: Saving a Game to File
 
 After every move made, we should update the saved version of the game's file.
+The server stores each game's save as `game_<id>.save` in its working directory.
 
 > [!IMPORTANT]
 > Task: Implement the logic in `server.c` and `save.c` that saves an in-memory game struct to a game file after every move.

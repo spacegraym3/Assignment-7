@@ -4,8 +4,10 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <errno.h>
 
 #include "game.h"
+#include "save.h"
 
 #define PORT 8080
 
@@ -78,6 +80,17 @@ static void send_game_state(int sock_fd, const struct server_game *server_game,
                           server_game, player, status, winner, NULL) < 0) {
             fprintf(stderr, "Could not notify player %d in game %d\n",
                     player, server_game->game.gameId);
+        }
+    }
+}
+
+static void send_game_error(int sock_fd, const struct server_game *server_game,
+                            const char *message) {
+    for (int player = 0; player < server_game->player_count; player++) {
+        if (send_response(sock_fd, &server_game->players[player],
+                          server_game, player, SERVER_ERROR, -1, message) < 0) {
+            fprintf(stderr, "Could not notify player %d in game %d: %s\n",
+                    player, server_game->game.gameId, message);
         }
     }
 }
@@ -217,11 +230,32 @@ int main(int argc, char* argv[]) {
             }
             continue;
         }
+        struct game previous_game = server_game->game;
         if (make_move(&server_game->game, player, column) < 0) {
             if (send_response(sock_fd, &client_addr, server_game, player,
                               SERVER_ACTIVE, -1, NULL) < 0) {
                 fprintf(stderr, "Could not resend game state after invalid move\n");
             }
+            continue;
+        }
+
+        char filepath[64];
+        int path_length = snprintf(filepath, sizeof(filepath),
+                                   "game_%d.save", server_game->game.gameId);
+        if (path_length < 0 || (size_t)path_length >= sizeof(filepath)) {
+            fprintf(stderr, "Could not construct save path for game %d\n",
+                    server_game->game.gameId);
+            server_game->game = previous_game;
+            send_game_error(sock_fd, server_game, "Could not save game state");
+            continue;
+        }
+
+        if (savegame(&server_game->game, filepath) < 0) {
+            int save_errno = errno;
+            server_game->game = previous_game;
+            errno = save_errno;
+            perror("savegame");
+            send_game_error(sock_fd, server_game, "Could not save game state");
             continue;
         }
 
