@@ -41,17 +41,7 @@ static int send_request(int sock_fd, const struct sockaddr_in *server_addr,
         .column = htonl(column),
         .player = htonl(player)
     };
-    ssize_t sent = sendto(sock_fd, &request, sizeof(request), 0,
-                          (const struct sockaddr *)server_addr,
-                          sizeof(*server_addr));
-    if (sent < 0) {
-        perror("sendto");
-        return -1;
-    }
-    if ((size_t)sent != sizeof(request)) {
-        fprintf(stderr, "Failed to send complete request\n");
-        return -1;
-    }
+    ssize_t sent = sendto(sock_fd, &request, sizeof(request), 0, (const struct sockaddr *)server_addr, sizeof(*server_addr));
     return 0;
 }
 
