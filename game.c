@@ -23,7 +23,13 @@ int check_win(struct game* g) {
 Initializes an existing game with an empty board.
 */
 void new_game(struct game* g, int gameId) {
-   
-}
+    for (int row = 0; row < BOARD_ROWS; row++) {
+        for (int col = 0; col < BOARD_COLUMNS; col++) {
+            g->board.cells[row][col] = EMPTY_CELL;
+        }
+    }
 
+    g->gameId = gameId;
+    g->currentPlayer = 0;
+}
 
