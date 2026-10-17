@@ -128,20 +128,6 @@ int main() {
             break;
         }
 
-        if (response.status == SERVER_ERROR) {
-            fprintf(stderr, "Server error: %s\n", response.error);
-            result = 1;
-            break;
-        }
-        if (response.status != SERVER_WAITING &&
-            response.status != SERVER_ACTIVE &&
-            response.status != SERVER_FINISHED &&
-            response.status != SERVER_TIE) {
-            fprintf(stderr, "Received an unknown response from the server\n");
-            result = 1;
-            break;
-        }
-
         if (player < 0) {
             player = response.player;
             if (player != 0 && player != 1) {
