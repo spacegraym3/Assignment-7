@@ -77,11 +77,7 @@ int main() {
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(SERVER_PORT);
-    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) != 1) {
-        fprintf(stderr, "Invalid server address: %s\n", SERVER_IP);
-        close(sock_fd);
-        return 1;
-    }
+    inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
 
 
     printf("Connect 4\n");
