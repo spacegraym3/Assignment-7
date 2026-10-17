@@ -50,14 +50,7 @@ static int receive_response(int sock_fd, struct server_response *response) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return 1;
         }
-        perror("recvfrom");
-        return -1;
     }
-    if ((size_t)received != sizeof(*response)) {
-        fprintf(stderr, "Received an invalid response from the server\n");
-        return -1;
-    }
-
     response->status = (int32_t)ntohl((uint32_t)response->status);
     response->player = (int32_t)ntohl((uint32_t)response->player);
     response->winner = (int32_t)ntohl((uint32_t)response->winner);
@@ -72,21 +65,12 @@ static int receive_response(int sock_fd, struct server_response *response) {
 
 int main() {
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock_fd < 0) {
-        perror("socket");
-        return 1;
-    }
 
     struct timeval receive_timeout = {
         .tv_sec = 0,
         .tv_usec = 500000
     };
-    if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout,
-                   sizeof(receive_timeout)) < 0) {
-        perror("setsockopt");
-        close(sock_fd);
-        return 1;
-    }
+    setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout, sizeof(receive_timeout));
 
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
