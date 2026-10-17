@@ -77,7 +77,7 @@ static int valid_game(const struct game *game) {
 Saves the game database to the specified filepath.
 Returns 0 on success, -1 on failure.
 */
-int savegame(struct gameDB* game_db, const char* filepath) {
+int savegame(struct gameDB* game_db, char* filepath) {
     if (game_db == NULL || filepath == NULL || filepath[0] == '\0' ||
         game_db->game_count > MAX_GAMES) {
         errno = EINVAL;
@@ -209,7 +209,7 @@ static int decode_game(struct game *game, const uint32_t *words,
 Loads a game database written by savegame.
 Returns 0 on success, -1 on failure.
 */
-int loadgame(struct gameDB* game_db, const char* filepath) {
+int loadgame(struct gameDB* game_db, char* filepath) {
     if (game_db == NULL || filepath == NULL || filepath[0] == '\0') {
         errno = EINVAL;
         return -1;

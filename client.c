@@ -205,7 +205,7 @@ int main() {
             continue;
         }
 
-        if (response.current_player == player) {
+        if (response.current_player == player && state_changed) {
             int column = -1;
             printf("\nInput Move Row: > ");
             if (scanf("%d", &column) != 1 ||

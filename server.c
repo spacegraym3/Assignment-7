@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
     int next_game_id = 0;
     int recovery_mode = argc > 1 && strcmp(argv[1], "1") == 0;
     if (recovery_mode) {
-        const char *database_path = "games.save";
+        char *database_path = "games.save";
         struct gameDB recovered_games;
         if (loadgame(&recovered_games, database_path) == 0) {
             for (size_t index = 0; index < recovered_games.game_count; index++) {
