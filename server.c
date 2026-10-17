@@ -196,14 +196,6 @@ int main(int argc, char* argv[]) {
         ssize_t received = recvfrom(sock_fd, &request, sizeof(request), 0,
                                     (struct sockaddr *)&client_addr,
                                     &client_len);
-        if (received < 0) {
-            perror("recvfrom");
-            continue;
-        }
-        if ((size_t)received != sizeof(request)) {
-            fprintf(stderr, "Ignoring malformed client request\n");
-            continue;
-        }
 
         int type = (int32_t)ntohl((uint32_t)request.type);
         int game_id = (int32_t)ntohl((uint32_t)request.game_id);
