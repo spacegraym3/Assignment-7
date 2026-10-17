@@ -1,6 +1,13 @@
 #include "common.h"
 
-#define MAX_GAMES 100  /* must match the malloc in server.c main() */
+#include <stddef.h>
 
-int savegame(const struct game* game, const char* filepath);
-int loadgame(struct game* game, const char* filepath);
+#define MAX_GAMES 100
+
+struct gameDB {
+    size_t game_count;
+    struct game games[MAX_GAMES];
+};
+
+int savegame(struct gameDB* game_db, const char* filepath);
+int loadgame(struct gameDB* game_db, const char* filepath);

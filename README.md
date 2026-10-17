@@ -488,11 +488,12 @@ Without argv[1], start the server without recovery mode.
 
 ## Step 5a: Saving a Game to File
 
-After every move made, we should update the saved version of the game's file.
-The server stores each game's save as `game_<id>.save` in its working directory.
+After every move made, the server updates a snapshot of the game database in
+`games.save` in its working directory. The snapshot stores all active games
+together so recovery can restore them in one load.
 
 > [!IMPORTANT]
-> Task: Implement the logic in `server.c` and `save.c` that saves an in-memory game struct to a game file after every move.
+> Task: Implement the logic in `server.c` and `save.c` that saves the in-memory game database to a file after every move.
 
 ## Step 5b: Loading a Game from a File
 
@@ -501,7 +502,7 @@ When your server starts up in `recovery mode`, in main, the first thing we shoul
 You are free to name the disk file as you please and format the file as you wish.
 
 > [!IMPORTANT]
-> Task: Implement the logic in `server.c` and `save.c` that loads the save game file to an in-memory game struct.
+> Task: Implement the logic in `server.c` and `save.c` that loads the saved game database into memory.
 > - Task: Verify your code passes the `t5` when running `./test.sh`
 
 ## Step 5c: Lack of Robustness

@@ -158,33 +158,51 @@ int main(int argc, char* argv[]) {
     int next_game_id = 0;
     int recovery_mode = argc > 1 && strcmp(argv[1], "1") == 0;
     if (recovery_mode) {
-        for (int game_id = 0; game_id < MAX_GAMES; game_id++) {
-            char filepath[64];
-            int path_length = snprintf(filepath, sizeof(filepath),
-                                       "game_%d.save", game_id);
-            if (path_length < 0 || (size_t)path_length >= sizeof(filepath)) {
-                fprintf(stderr, "Could not construct save path for game %d\n",
-                        game_id);
-                continue;
-            }
-
-            struct game recovered_game;
-            if (loadgame(&recovered_game, filepath) < 0) {
-                if (errno != ENOENT) {
-                    perror(filepath);
+        const char *database_path = "games.save";
+        struct gameDB recovered_games;
+        if (loadgame(&recovered_games, database_path) == 0) {
+            for (size_t index = 0; index < recovered_games.game_count; index++) {
+                struct game recovered_game = recovered_games.games[index];
+                int game_id = recovered_game.gameId;
+                games[game_id].in_use = 1;
+                games[game_id].recovered = 1;
+                games[game_id].game = recovered_game;
+                if (game_id >= next_game_id) {
+                    next_game_id = game_id + 1;
                 }
-                continue;
             }
-            if (recovered_game.gameId != game_id) {
-                fprintf(stderr, "Save file %s contains the wrong game ID\n",
-                        filepath);
-                continue;
-            }
+        } else if (errno == ENOENT) {
+            for (int game_id = 0; game_id < MAX_GAMES; game_id++) {
+                char filepath[64];
+                int path_length = snprintf(filepath, sizeof(filepath),
+                                           "game_%d.save", game_id);
+                if (path_length < 0 || (size_t)path_length >= sizeof(filepath)) {
+                    fprintf(stderr, "Could not construct save path for game %d\n",
+                            game_id);
+                    continue;
+                }
 
-            games[game_id].in_use = 1;
-            games[game_id].recovered = 1;
-            games[game_id].game = recovered_game;
-            next_game_id = game_id + 1;
+                struct gameDB legacy_games;
+                if (loadgame(&legacy_games, filepath) < 0) {
+                    if (errno != ENOENT) {
+                        perror(filepath);
+                    }
+                    continue;
+                }
+                if (legacy_games.game_count != 1 ||
+                    legacy_games.games[0].gameId != game_id) {
+                    fprintf(stderr, "Save file %s contains the wrong game ID\n",
+                            filepath);
+                    continue;
+                }
+
+                games[game_id].in_use = 1;
+                games[game_id].recovered = 1;
+                games[game_id].game = legacy_games.games[0];
+                next_game_id = game_id + 1;
+            }
+        } else {
+            perror(database_path);
         }
     }
 
@@ -370,18 +388,14 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        char filepath[64];
-        int path_length = snprintf(filepath, sizeof(filepath),
-                                   "game_%d.save", server_game->game.gameId);
-        if (path_length < 0 || (size_t)path_length >= sizeof(filepath)) {
-            fprintf(stderr, "Could not construct save path for game %d\n",
-                    server_game->game.gameId);
-            server_game->game = previous_game;
-            send_game_error(sock_fd, server_game, "Could not save game state");
-            continue;
+        struct gameDB saved_games = {0};
+        for (int id = 0; id < next_game_id; id++) {
+            if (games[id].in_use) {
+                saved_games.games[saved_games.game_count++] = games[id].game;
+            }
         }
 
-        if (savegame(&server_game->game, filepath) < 0) {
+        if (savegame(&saved_games, "games.save") < 0) {
             int save_errno = errno;
             server_game->game = previous_game;
             errno = save_errno;
