@@ -147,7 +147,6 @@ int main(int argc, char* argv[]) {
     server_addr.sin_port = htons(PORT);
 
     if (bind(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("bind");
         close(sock_fd);
         return 1;
     }
@@ -176,25 +175,9 @@ int main(int argc, char* argv[]) {
                 char filepath[64];
                 int path_length = snprintf(filepath, sizeof(filepath),
                                            "game_%d.save", game_id);
-                if (path_length < 0 || (size_t)path_length >= sizeof(filepath)) {
-                    fprintf(stderr, "Could not construct save path for game %d\n",
-                            game_id);
-                    continue;
-                }
 
                 struct gameDB legacy_games;
-                if (loadgame(&legacy_games, filepath) < 0) {
-                    if (errno != ENOENT) {
-                        perror(filepath);
-                    }
-                    continue;
-                }
-                if (legacy_games.game_count != 1 ||
-                    legacy_games.games[0].gameId != game_id) {
-                    fprintf(stderr, "Save file %s contains the wrong game ID\n",
-                            filepath);
-                    continue;
-                }
+                loadgame(&legacy_games, filepath);
 
                 games[game_id].in_use = 1;
                 games[game_id].recovered = 1;
